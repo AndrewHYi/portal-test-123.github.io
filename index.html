@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SCF Portal Embed Tester</title>
+
+  <!-- React CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel Standalone for in-browser JSX -->
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f5f5f5;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ── Environment configs ──
+    const ENV_CONFIG = {
+      "test.seeclickfix.com": {
+        label: "TEST",
+        embedUrl: "https://s3.amazonaws.com/cdn.seeclickfix.com/web_portal_test/embed.js",
+        defaultToken: "CqTuizuRg28XaNXqMZszFRsp",
+        bannerColor: "#e65100",
+        bannerBg: "#fff3e0",
+      },
+      "int.seeclickfix.com": {
+        label: "INT",
+        embedUrl: "https://s3.amazonaws.com/cdn.seeclickfix.com/web_portal_int/embed.js",
+        defaultToken: "GHhYouRSWy3n6deLG6ZxXmAw",
+        bannerColor: "#0d47a1",
+        bannerBg: "#e3f2fd",
+      },
+      "qa02.seeclickfix.com": {
+        label: "QA02",
+        embedUrl: "https://s3.amazonaws.com/cdn.seeclickfix.com/web_portal_qa02/embed.js",
+        defaultToken: "VjdVBhWq4tFwQ3TFq5zV1CR7",
+        bannerColor: "#4a148c",
+        bannerBg: "#f3e5f5",
+      },
+    };
+
+    const DOMAINS = Object.keys(ENV_CONFIG);
+    const DEFAULT_DOMAIN = "test.seeclickfix.com";
+
+    // ── Cleanup helpers ──
+    function cleanupEmbed() {
+      // Remove any injected embed / marker scripts
+      document.querySelectorAll("script[data-id='scf-fetch-portal3-embed-script']").forEach(s => s.remove());
+      document.querySelectorAll("script[id^='scf-portal3-']").forEach(s => s.remove());
+      // Remove any portal containers the embed may have created
+      document.querySelectorAll("div[id^='scf-portal3-']").forEach(d => d.remove());
+      // Clear SCF state
+      if (window.SCF) {
+        window.SCF.portalEmbeds = [];
+      }
+    }
+
+    // ── ConfigForm component ──
+    function ConfigForm({ onLoad }) {
+      const [domain, setDomain] = useState(DEFAULT_DOMAIN);
+      const [token, setToken] = useState(ENV_CONFIG[DEFAULT_DOMAIN].defaultToken);
+
+      const handleDomainChange = (e) => {
+        const newDomain = e.target.value;
+        setDomain(newDomain);
+        setToken(ENV_CONFIG[newDomain].defaultToken);
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!token.trim()) return;
+        onLoad(domain, token.trim());
+      };
+
+      return (
+        <div style={styles.configWrapper}>
+          <div style={styles.configCard}>
+            <h1 style={styles.title}>SCF Portal Embed Tester</h1>
+            <p style={styles.subtitle}>Select an environment and enter your token to load the portal embed widget.</p>
+
+            <form onSubmit={handleSubmit}>
+              <label style={styles.label}>Environment</label>
+              <select value={domain} onChange={handleDomainChange} style={styles.select}>
+                {DOMAINS.map(d => (
+                  <option key={d} value={d}>
+                    {ENV_CONFIG[d].label} — {d}
+                  </option>
+                ))}
+              </select>
+
+              <label style={styles.label}>Token</label>
+              <input
+                type="text"
+                value={token}
+                onChange={e => setToken(e.target.value)}
+                placeholder="Paste your token here…"
+                style={styles.input}
+                spellCheck={false}
+              />
+
+              <button
+                type="submit"
+                disabled={!token.trim()}
+                style={{
+                  ...styles.button,
+                  opacity: token.trim() ? 1 : 0.5,
+                  cursor: token.trim() ? "pointer" : "not-allowed",
+                }}
+              >
+                Load Embed
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // ── ErrorBanner component ──
+    function ErrorBanner({ message, onReset }) {
+      return (
+        <div style={styles.errorBanner}>
+          <div style={styles.errorInner}>
+            <span style={styles.errorIcon}>⛔</span>
+            <div>
+              <strong style={{ fontSize: "1.3rem" }}>Error: Token may not be valid</strong>
+              <p style={{ margin: "6px 0 0", fontSize: "1rem" }}>{message}</p>
+            </div>
+          </div>
+          <button onClick={onReset} style={styles.errorButton}>← Go Back &amp; Try Again</button>
+        </div>
+      );
+    }
+
+    // ── EnvBanner component ──
+    function EnvBanner({ domain }) {
+      const cfg = ENV_CONFIG[domain];
+      return (
+        <div style={{
+          ...styles.envBanner,
+          backgroundColor: cfg.bannerColor,
+          color: "#fff",
+        }}>
+          <span style={styles.envBannerText}>
+            ⚠️&nbsp; {cfg.label} EMBED SCRIPT TEST &nbsp;⚠️&nbsp;&nbsp;|&nbsp;&nbsp;{domain}
+          </span>
+        </div>
+      );
+    }
+
+    // ── EmbedView component ──
+    function EmbedView({ domain, token, onReset }) {
+      const containerRef = useRef(null);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        const cfg = ENV_CONFIG[domain];
+        if (!cfg) {
+          setError("Unknown domain: " + domain);
+          return;
+        }
+
+        // Error listeners
+        const handleError = (event) => {
+          setError(event.message || "An unexpected error occurred while loading the embed.");
+        };
+        const handleRejection = (event) => {
+          setError(event.reason?.message || event.reason || "An unhandled promise rejection occurred.");
+        };
+        window.addEventListener("error", handleError);
+        window.addEventListener("unhandledrejection", handleRejection);
+
+        // Replicate the exact original embed bootstrap pattern:
+        // 1. A marker script with data-id sits in the DOM
+        // 2. The embed <script> is inserted BEFORE the marker
+        // 3. SCF.portalEmbeds is pushed with insertDomLocation = embed script id
+        const container = containerRef.current;
+        if (!container) return;
+
+        const insertId = "scf-portal3-" + Date.now() + Math.random();
+
+        // Marker script (mimics the original inline <script data-id=...>)
+        const marker = document.createElement("script");
+        marker.setAttribute("data-id", "scf-fetch-portal3-embed-script");
+        container.appendChild(marker);
+
+        // Embed script (inserted before the marker, just like the original)
+        const embedScript = document.createElement("script");
+        embedScript.type = "text/javascript";
+        embedScript.async = true;
+        embedScript.src = cfg.embedUrl;
+        embedScript.id = insertId;
+        embedScript.onerror = () => {
+          setError("Failed to load the embed script. Check your network or the environment URL.");
+        };
+        marker.parentNode.insertBefore(embedScript, marker);
+
+        // Push config
+        window.SCF = window.SCF || {};
+        window.SCF.portalEmbeds = window.SCF.portalEmbeds || [];
+        window.SCF.portalEmbeds.push({
+          insertDomLocation: insertId,
+          token: token,
+          width: "100%",
+          height: "100%",
+          startingPage: "exploreMap",
+          requestTypeId: "",
+          signin: "",
+        });
+
+        return () => {
+          window.removeEventListener("error", handleError);
+          window.removeEventListener("unhandledrejection", handleRejection);
+          cleanupEmbed();
+        };
+      }, [domain, token]);
+
+      const handleReset = () => {
+        cleanupEmbed();
+        onReset();
+      };
+
+      return (
+        <div style={styles.embedWrapper}>
+          {error && <ErrorBanner message={error} onReset={handleReset} />}
+          <div ref={containerRef} style={styles.embedContainer} />
+          <EnvBanner domain={domain} />
+          {!error && (
+            <button onClick={handleReset} style={styles.backButton} title="Back to config">
+              ← Reset
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── App component ──
+    function App() {
+      const [view, setView] = useState("config");
+      const [activeDomain, setActiveDomain] = useState(null);
+      const [activeToken, setActiveToken] = useState(null);
+
+      const handleLoad = (domain, token) => {
+        cleanupEmbed();
+        setActiveDomain(domain);
+        setActiveToken(token);
+        setView("embed");
+      };
+
+      const handleReset = () => {
+        cleanupEmbed();
+        setView("config");
+        setActiveDomain(null);
+        setActiveToken(null);
+      };
+
+      if (view === "embed" && activeDomain && activeToken) {
+        return <EmbedView domain={activeDomain} token={activeToken} onReset={handleReset} />;
+      }
+      return <ConfigForm onLoad={handleLoad} />;
+    }
+
+    // ── Styles ──
+    const styles = {
+      configWrapper: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: "100vh",
+        padding: "24px",
+        background: "linear-gradient(135deg, #1a237e 0%, #0d47a1 50%, #01579b 100%)",
+      },
+      configCard: {
+        background: "#fff",
+        borderRadius: "16px",
+        padding: "48px 40px",
+        maxWidth: "520px",
+        width: "100%",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+      },
+      title: {
+        margin: "0 0 8px",
+        fontSize: "1.8rem",
+        color: "#1a237e",
+      },
+      subtitle: {
+        margin: "0 0 32px",
+        color: "#666",
+        fontSize: "0.95rem",
+        lineHeight: 1.5,
+      },
+      label: {
+        display: "block",
+        fontWeight: 600,
+        marginBottom: "6px",
+        fontSize: "0.9rem",
+        color: "#333",
+      },
+      select: {
+        display: "block",
+        width: "100%",
+        padding: "12px 14px",
+        fontSize: "1rem",
+        border: "2px solid #ddd",
+        borderRadius: "8px",
+        marginBottom: "20px",
+        outline: "none",
+        appearance: "auto",
+        background: "#fafafa",
+      },
+      input: {
+        display: "block",
+        width: "100%",
+        padding: "12px 14px",
+        fontSize: "1rem",
+        border: "2px solid #ddd",
+        borderRadius: "8px",
+        marginBottom: "28px",
+        outline: "none",
+        fontFamily: "monospace",
+        background: "#fafafa",
+      },
+      button: {
+        display: "block",
+        width: "100%",
+        padding: "14px",
+        fontSize: "1.1rem",
+        fontWeight: 700,
+        color: "#fff",
+        background: "linear-gradient(135deg, #1a237e, #0d47a1)",
+        border: "none",
+        borderRadius: "8px",
+      },
+      embedWrapper: {
+        position: "relative",
+        width: "100vw",
+        height: "100vh",
+        overflow: "hidden",
+      },
+      embedContainer: {
+        width: "100%",
+        height: "100%",
+      },
+      errorBanner: {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 10000,
+        background: "#d32f2f",
+        color: "#fff",
+        padding: "20px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "16px",
+        flexWrap: "wrap",
+        boxShadow: "0 4px 20px rgba(211,47,47,0.4)",
+      },
+      errorInner: {
+        display: "flex",
+        alignItems: "center",
+        gap: "14px",
+      },
+      errorIcon: {
+        fontSize: "2.2rem",
+      },
+      errorButton: {
+        padding: "10px 24px",
+        fontSize: "1rem",
+        fontWeight: 700,
+        background: "#fff",
+        color: "#d32f2f",
+        border: "none",
+        borderRadius: "6px",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      },
+      envBanner: {
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 10000,
+        padding: "14px 24px",
+        textAlign: "center",
+        boxShadow: "0 -4px 20px rgba(0,0,0,0.3)",
+      },
+      envBannerText: {
+        fontSize: "1.3rem",
+        fontWeight: 800,
+        letterSpacing: "1px",
+        textTransform: "uppercase",
+      },
+      backButton: {
+        position: "fixed",
+        top: "12px",
+        left: "12px",
+        zIndex: 10001,
+        padding: "8px 16px",
+        fontSize: "0.85rem",
+        fontWeight: 600,
+        background: "rgba(255,255,255,0.9)",
+        color: "#333",
+        border: "1px solid #ccc",
+        borderRadius: "6px",
+        cursor: "pointer",
+        backdropFilter: "blur(4px)",
+      },
+    };
+
+    // ── Mount ──
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>

@@ -265,23 +265,76 @@
           signin: "",
         });
 
-        // Watch for the embed iframe to appear, then hide loading
-        const observer = new MutationObserver(() => {
-          const iframe = container.querySelector("iframe");
-          if (iframe) {
-            // Wait for iframe to actually load its content
-            iframe.addEventListener("load", () => setLoading(false));
-            // Fallback: hide after a short delay in case load event already fired
-            setTimeout(() => setLoading(false), 1500);
-            observer.disconnect();
+        // Watch for the embed content to actually render.
+        // The embed may use an iframe OR render directly into the DOM.
+        // We poll for known SCF UI elements as a heuristic, plus check
+        // for iframe load as a secondary signal.
+        const CONTENT_SELECTORS = [
+          ".scf-org-logo",
+          ".config__top-toolbar-text",
+          "[class*='toolbar']",
+          "[class*='portal']",
+          "[class*='explore']",
+        ];
+
+        const checkForContent = () => {
+          // Check for SCF elements rendered directly in the container
+          for (const sel of CONTENT_SELECTORS) {
+            if (container.querySelector(sel)) return true;
           }
+          // Check inside any iframe (same-origin only, fails silently for cross-origin)
+          const iframes = container.querySelectorAll("iframe");
+          for (const iframe of iframes) {
+            try {
+              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+              if (iframeDoc) {
+                for (const sel of CONTENT_SELECTORS) {
+                  if (iframeDoc.querySelector(sel)) return true;
+                }
+                // Heuristic: iframe body has substantial content (more than just a loader)
+                if (iframeDoc.body && iframeDoc.body.children.length > 2) return true;
+              }
+            } catch (e) {
+              // Cross-origin — can't inspect, fall through to other checks
+            }
+            // If iframe has fired its load event and has a src, treat as loaded
+            if (iframe.src && iframe.getAttribute("data-loaded")) return true;
+          }
+          return false;
+        };
+
+        // Mark iframes as loaded when their load event fires
+        const observer = new MutationObserver(() => {
+          container.querySelectorAll("iframe").forEach(iframe => {
+            if (!iframe.getAttribute("data-load-listener")) {
+              iframe.setAttribute("data-load-listener", "true");
+              iframe.addEventListener("load", () => {
+                iframe.setAttribute("data-loaded", "true");
+              });
+            }
+          });
         });
         observer.observe(container, { childList: true, subtree: true });
-        // Fallback timeout in case no iframe ever appears
-        const fallbackTimer = setTimeout(() => setLoading(false), 8000);
+
+        // Poll every 300ms for content
+        const pollInterval = setInterval(() => {
+          if (checkForContent()) {
+            setLoading(false);
+            clearInterval(pollInterval);
+            observer.disconnect();
+          }
+        }, 300);
+
+        // Hard fallback: don't wait forever
+        const fallbackTimer = setTimeout(() => {
+          setLoading(false);
+          clearInterval(pollInterval);
+          observer.disconnect();
+        }, 12000);
 
         return () => {
           observer.disconnect();
+          clearInterval(pollInterval);
           clearTimeout(fallbackTimer);
           window.removeEventListener("error", handleError);
           window.removeEventListener("unhandledrejection", handleRejection);

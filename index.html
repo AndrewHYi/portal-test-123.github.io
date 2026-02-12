@@ -150,6 +150,20 @@
       }
     }
 
+    // ── Portal config fetcher (via CORS proxy in dev) ──
+    const IS_DEV = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+      || window.location.hostname.endsWith(".github.io");
+
+    async function fetchPortalConfig(domain, token) {
+      const scfUrl = "https://" + domain + "/scf/v1/portal/configs/" + token;
+      const url = IS_DEV
+        ? "https://corsproxy.io/?" + encodeURIComponent(scfUrl)
+        : scfUrl;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("Config fetch failed: " + resp.status);
+      return resp.json();
+    }
+
     // ── ConfigForm component ──
     function ConfigForm({ onLoad }) {
       const [domain, setDomain] = useState(DEFAULT_DOMAIN);
@@ -229,7 +243,7 @@
     }
 
     // ── EnvBanner component ──
-    function EnvBanner({ domain, token, onReset }) {
+    function EnvBanner({ domain, token, onReset, debugOpen }) {
       const cfg = ENV_CONFIG[domain];
       const handlePopout = () => {
         const url = window.location.origin + window.location.pathname + "#domain=" + encodeURIComponent(domain) + "&token=" + encodeURIComponent(token);
@@ -240,6 +254,8 @@
           ...styles.envBanner,
           borderTopColor: "rgba(251,191,36,0.4)",
           color: "#fbbf24",
+          right: debugOpen ? "400px" : "0",
+          transition: "right 0.3s ease",
         }}>
           {onReset && (
             <button onClick={onReset} style={styles.bannerResetButton} className="wc-btn" title="Back to config">
@@ -268,11 +284,199 @@
       );
     }
 
+    // ── Debug panel helper components ──
+    function Section({ title, children, defaultOpen = true }) {
+      const [open, setOpen] = useState(defaultOpen);
+      return (
+        <div style={styles.debugSection}>
+          <div style={styles.debugSectionHeader} onClick={() => setOpen(!open)}>
+            <span style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", transition: "transform 0.15s" }}>▶</span>
+            <span style={{ marginLeft: "8px" }}>{title}</span>
+          </div>
+          {open && <div style={styles.debugSectionBody}>{children}</div>}
+        </div>
+      );
+    }
+
+    function InfoRow({ label, value, mono }) {
+      return (
+        <div style={styles.debugInfoRow}>
+          <span style={styles.debugInfoLabel}>{label}</span>
+          <span style={{ ...styles.debugInfoValue, fontFamily: mono ? "'Courier New', monospace" : "inherit" }}>
+            {value === undefined || value === null ? <em style={{ opacity: 0.4 }}>—</em> : String(value)}
+          </span>
+        </div>
+      );
+    }
+
+    function FlagStatus({ flag, features }) {
+      const present = Array.isArray(features) && features.includes(flag);
+      return (
+        <div style={{
+          ...styles.debugFlagBanner,
+          background: present ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+          borderColor: present ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)",
+        }}>
+          <span style={{ fontWeight: 700, color: present ? "#4ade80" : "#f87171" }}>
+            {present ? "ENABLED" : "NOT PRESENT"}
+          </span>
+          <span style={{ marginLeft: "8px", fontFamily: "'Courier New', monospace", fontSize: "0.75rem", opacity: 0.8 }}>{flag}</span>
+        </div>
+      );
+    }
+
+    function DebugToggleButton({ isOpen, onClick }) {
+      return (
+        <button onClick={onClick} style={{
+          ...styles.debugToggleBtn,
+          right: isOpen ? "400px" : "0",
+        }} title={isOpen ? "Close debug panel" : "Open debug panel"}>
+          <span style={{ writingMode: "vertical-rl", textOrientation: "mixed", letterSpacing: "2px" }}>
+            {isOpen ? "Close ✕" : "Debug ⚙"}
+          </span>
+        </button>
+      );
+    }
+
+    function DebugPanel({ domain, token, portalConfig, configLoading, configError, onRefresh }) {
+      const [userJson, setUserJson] = useState("");
+      const [parsedUser, setParsedUser] = useState(null);
+      const [userParseError, setUserParseError] = useState(null);
+
+      const handlePasteUser = (e) => {
+        const text = e.target.value;
+        setUserJson(text);
+        setUserParseError(null);
+        setParsedUser(null);
+        if (text.trim()) {
+          try {
+            setParsedUser(JSON.parse(text));
+          } catch (err) {
+            setUserParseError("Invalid JSON: " + err.message);
+          }
+        }
+      };
+
+      const handleCheckAuth = () => {
+        window.open("https://" + domain + "/scf/v1/current_user", "_blank");
+      };
+
+      const cfg = ENV_CONFIG[domain];
+      const org = portalConfig?.organization;
+      const features = portalConfig?.features || [];
+      const skus = portalConfig?.skus || [];
+
+      return (
+        <div style={styles.debugPanel}>
+          <div style={styles.debugPanelHeader}>
+            <span>Debug Panel</span>
+            <button onClick={onRefresh} style={styles.debugRefreshBtn} className="wc-btn" disabled={configLoading}>
+              {configLoading ? "…" : "↻ Refresh"}
+            </button>
+          </div>
+          <div style={styles.debugPanelContent}>
+            <Section title="Environment">
+              <InfoRow label="Domain" value={domain} mono />
+              <InfoRow label="Label" value={cfg?.label} />
+              <InfoRow label="Token" value={token} mono />
+            </Section>
+
+            {configError && (
+              <div style={styles.debugErrorMsg}>Config fetch error: {configError}</div>
+            )}
+
+            {configLoading && !portalConfig && (
+              <div style={{ padding: "12px 16px", opacity: 0.5, fontSize: "0.8rem" }}>Loading config…</div>
+            )}
+
+            {portalConfig && (
+              <>
+                <Section title="Organization">
+                  <InfoRow label="Name" value={org?.name} />
+                  <InfoRow label="ID" value={org?.id} mono />
+                  <InfoRow label="use_ai" value={org?.use_ai != null ? String(org.use_ai) : undefined} />
+                  <InfoRow label="Guest submissions" value={portalConfig.allow_guest_submissions != null ? String(portalConfig.allow_guest_submissions) : undefined} />
+                </Section>
+
+                <Section title="Feature Flags">
+                  <FlagStatus flag="tp_167319_direct_cp_auth" features={features} />
+                  {features.length > 0 ? (
+                    <div style={styles.debugFlagList}>
+                      {features.map((f, i) => (
+                        <div key={i} style={styles.debugFlagItem}>{f}</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: "8px 0", opacity: 0.4, fontSize: "0.8rem" }}>No feature flags</div>
+                  )}
+                </Section>
+
+                <Section title="SKUs" defaultOpen={false}>
+                  {skus.length > 0 ? (
+                    <div style={styles.debugFlagList}>
+                      {skus.map((s, i) => (
+                        <div key={i} style={styles.debugFlagItem}>{typeof s === "object" ? JSON.stringify(s) : s}</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: "8px 0", opacity: 0.4, fontSize: "0.8rem" }}>No SKUs</div>
+                  )}
+                </Section>
+              </>
+            )}
+
+            <Section title="Auth / User">
+              <button onClick={handleCheckAuth} style={styles.debugAuthBtn} className="wc-btn">
+                Check Auth ↗
+              </button>
+              <p style={{ margin: "8px 0 4px", fontSize: "0.7rem", opacity: 0.5 }}>
+                Open the link above, then paste the JSON response below:
+              </p>
+              <textarea
+                value={userJson}
+                onChange={handlePasteUser}
+                placeholder='Paste /scf/v1/current_user JSON here…'
+                style={styles.debugTextarea}
+                spellCheck={false}
+              />
+              {userParseError && (
+                <div style={{ ...styles.debugErrorMsg, marginTop: "4px" }}>{userParseError}</div>
+              )}
+              {parsedUser && (
+                <div style={{ marginTop: "8px" }}>
+                  <InfoRow label="Login" value={parsedUser.login} />
+                  <InfoRow label="Name" value={parsedUser.name} />
+                  <InfoRow label="Email" value={parsedUser.email} />
+                  <InfoRow label="Role" value={parsedUser.role} />
+                  <InfoRow label="ID" value={parsedUser.id} mono />
+                  <InfoRow label="Org ID" value={parsedUser.organization_id} mono />
+                </div>
+              )}
+            </Section>
+          </div>
+        </div>
+      );
+    }
+
     // ── EmbedView component ──
     function EmbedView({ domain, token, onReset }) {
       const containerRef = useRef(null);
       const [error, setError] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [debugOpen, setDebugOpen] = useState(true);
+      const [portalConfig, setPortalConfig] = useState(null);
+      const [configLoading, setConfigLoading] = useState(false);
+      const [configError, setConfigError] = useState(null);
+
+      const loadPortalConfig = useCallback(() => {
+        setConfigLoading(true);
+        setConfigError(null);
+        fetchPortalConfig(domain, token)
+          .then(data => { setPortalConfig(data); setConfigLoading(false); })
+          .catch(err => { setConfigError(err.message); setConfigLoading(false); });
+      }, [domain, token]);
+
+      useEffect(() => { loadPortalConfig(); }, [loadPortalConfig]);
 
       useEffect(() => {
         const cfg = ENV_CONFIG[domain];
@@ -415,8 +619,23 @@
         <div style={styles.embedWrapper}>
           {loading && !error && <LoadingOverlay domain={domain} />}
           {error && <ErrorBanner message={error} onReset={handleReset} />}
-          <div ref={containerRef} style={styles.embedContainer} />
-          <EnvBanner domain={domain} token={token} onReset={!error ? handleReset : undefined} />
+          <div ref={containerRef} style={{
+            ...styles.embedContainer,
+            width: debugOpen ? "calc(100% - 400px)" : "100%",
+            transition: "width 0.3s ease",
+          }} />
+          <EnvBanner domain={domain} token={token} onReset={!error ? handleReset : undefined} debugOpen={debugOpen} />
+          <DebugToggleButton isOpen={debugOpen} onClick={() => setDebugOpen(!debugOpen)} />
+          {debugOpen && (
+            <DebugPanel
+              domain={domain}
+              token={token}
+              portalConfig={portalConfig}
+              configLoading={configLoading}
+              configError={configError}
+              onRefresh={loadPortalConfig}
+            />
+          )}
         </div>
       );
     }
@@ -710,6 +929,167 @@
         fontSize: "0.85rem",
         fontFamily: '"Cinzel", serif',
         letterSpacing: "0.5px",
+      },
+
+      // ── Debug panel styles ──
+      debugToggleBtn: {
+        position: "fixed",
+        top: "50%",
+        transform: "translateY(-50%)",
+        zIndex: 10001,
+        padding: "12px 6px",
+        background: "linear-gradient(180deg, hsl(35 40% 22%) 0%, hsl(35 30% 16%) 100%)",
+        color: "#fbbf24",
+        border: "1px solid rgba(251,191,36,0.4)",
+        borderRight: "none",
+        borderRadius: "4px 0 0 4px",
+        cursor: "pointer",
+        fontFamily: '"Cinzel", serif',
+        fontSize: "0.7rem",
+        fontWeight: 700,
+        letterSpacing: "2px",
+        transition: "right 0.3s ease, filter 0.15s",
+      },
+      debugPanel: {
+        position: "fixed",
+        top: 0,
+        right: 0,
+        width: "400px",
+        height: "100vh",
+        zIndex: 10001,
+        background: "linear-gradient(180deg, hsl(35 10% 12%) 0%, hsl(35 8% 9%) 100%)",
+        borderLeft: "2px solid rgba(251,191,36,0.3)",
+        boxShadow: "-4px 0 20px rgba(0,0,0,0.5)",
+        display: "flex",
+        flexDirection: "column",
+        color: "#fef3c7",
+        fontSize: "0.8rem",
+      },
+      debugPanelHeader: {
+        padding: "16px 16px 12px",
+        borderBottom: "1px solid rgba(251,191,36,0.2)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        fontFamily: '"Cinzel", serif',
+        fontWeight: 900,
+        fontSize: "1rem",
+        color: "#fbbf24",
+        letterSpacing: "1px",
+        flexShrink: 0,
+      },
+      debugRefreshBtn: {
+        padding: "4px 12px",
+        fontSize: "0.7rem",
+        fontWeight: 700,
+        background: "linear-gradient(180deg, hsl(35 40% 22%) 0%, hsl(35 30% 16%) 100%)",
+        color: "#fbbf24",
+        border: "1px solid rgba(251,191,36,0.4)",
+        borderRadius: "2px",
+        cursor: "pointer",
+        fontFamily: '"Cinzel", serif',
+        transition: "filter 0.15s, transform 0.15s",
+      },
+      debugPanelContent: {
+        flex: 1,
+        overflowY: "auto",
+        paddingBottom: "60px",
+      },
+      debugSection: {
+        borderBottom: "1px solid rgba(251,191,36,0.1)",
+      },
+      debugSectionHeader: {
+        padding: "10px 16px",
+        cursor: "pointer",
+        fontFamily: '"Cinzel", serif',
+        fontWeight: 700,
+        fontSize: "0.8rem",
+        color: "#fbbf24",
+        letterSpacing: "0.5px",
+        userSelect: "none",
+        display: "flex",
+        alignItems: "center",
+      },
+      debugSectionBody: {
+        padding: "0 16px 12px",
+      },
+      debugInfoRow: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        padding: "4px 0",
+        gap: "12px",
+        borderBottom: "1px solid rgba(251,191,36,0.05)",
+      },
+      debugInfoLabel: {
+        fontWeight: 700,
+        fontSize: "0.7rem",
+        color: "rgba(251,191,36,0.7)",
+        textTransform: "uppercase",
+        letterSpacing: "0.5px",
+        flexShrink: 0,
+        paddingTop: "2px",
+      },
+      debugInfoValue: {
+        fontSize: "0.8rem",
+        color: "#fef3c7",
+        textAlign: "right",
+        wordBreak: "break-all",
+      },
+      debugFlagBanner: {
+        padding: "8px 12px",
+        borderRadius: "4px",
+        border: "1px solid",
+        marginBottom: "8px",
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "4px",
+      },
+      debugFlagList: {
+        maxHeight: "200px",
+        overflowY: "auto",
+      },
+      debugFlagItem: {
+        padding: "3px 0",
+        fontSize: "0.75rem",
+        fontFamily: "'Courier New', monospace",
+        borderBottom: "1px solid rgba(251,191,36,0.05)",
+        wordBreak: "break-all",
+      },
+      debugAuthBtn: {
+        padding: "8px 16px",
+        fontSize: "0.75rem",
+        fontWeight: 700,
+        background: "linear-gradient(180deg, hsl(200 40% 22%) 0%, hsl(200 30% 16%) 100%)",
+        color: "#93c5fd",
+        border: "1px solid rgba(147,197,253,0.4)",
+        borderRadius: "2px",
+        cursor: "pointer",
+        fontFamily: '"Cinzel", serif',
+        transition: "filter 0.15s, transform 0.15s",
+        width: "100%",
+      },
+      debugTextarea: {
+        width: "100%",
+        minHeight: "80px",
+        padding: "8px",
+        fontSize: "0.7rem",
+        fontFamily: "'Courier New', monospace",
+        background: "hsl(35 8% 8%)",
+        color: "#fef3c7",
+        border: "1px solid rgba(251,191,36,0.2)",
+        borderRadius: "2px",
+        resize: "vertical",
+        outline: "none",
+      },
+      debugErrorMsg: {
+        padding: "8px 16px",
+        fontSize: "0.75rem",
+        color: "#f87171",
+        background: "rgba(239,68,68,0.1)",
+        borderRadius: "4px",
+        margin: "0 16px 8px",
       },
     };
 

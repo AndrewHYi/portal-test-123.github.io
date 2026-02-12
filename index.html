@@ -232,8 +232,14 @@
     function EnvBanner({ domain, token, onReset }) {
       const cfg = ENV_CONFIG[domain];
       const handlePopout = () => {
-        const url = window.location.origin + window.location.pathname + "#domain=" + encodeURIComponent(domain) + "&token=" + encodeURIComponent(token);
-        window.open(url, "_blank");
+        // Find the iframe injected by the embed script and open its actual src
+        const iframe = document.querySelector("iframe[src]");
+        if (iframe && iframe.src) {
+          window.open(iframe.src, "_blank");
+        } else {
+          // Fallback: open the embed script's host domain
+          window.open("https://" + domain, "_blank");
+        }
       };
       return (
         <div style={{

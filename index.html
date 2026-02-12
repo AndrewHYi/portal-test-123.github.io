@@ -339,27 +339,34 @@
     }
 
     function DebugPanel({ domain, token, portalConfig, configLoading, configError, onRefresh }) {
-      const [userJson, setUserJson] = useState("");
-      const [parsedUser, setParsedUser] = useState(null);
-      const [userParseError, setUserParseError] = useState(null);
+      const [authStatus, setAuthStatus] = useState("loading");
+      const [authUser, setAuthUser] = useState(null);
+      const [authError, setAuthError] = useState(null);
 
-      const handlePasteUser = (e) => {
-        const text = e.target.value;
-        setUserJson(text);
-        setUserParseError(null);
-        setParsedUser(null);
-        if (text.trim()) {
-          try {
-            setParsedUser(JSON.parse(text));
-          } catch (err) {
-            setUserParseError("Invalid JSON: " + err.message);
-          }
+      useEffect(() => {
+        // Derive cookie name: test.seeclickfix.com → ember_simple_auth-session_portal_test
+        const subdomain = domain.split(".")[0];
+        const cookieName = "ember_simple_auth-session_portal_" + subdomain;
+        const cookies = document.cookie;
+        const hasCookie = cookies.split(";").some(c => c.trim().startsWith(cookieName + "="));
+
+        if (!hasCookie) {
+          // Can't read cross-domain .seeclickfix.com cookies from localhost
+          setAuthStatus("no_cookie");
+          // Still try the endpoint in case credentials work
+          fetch("https://" + domain + "/scf/v1/current_user", { credentials: "include" })
+            .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status + "")))
+            .then(data => { setAuthUser(data); setAuthStatus("authenticated"); })
+            .catch(() => { /* leave as no_cookie */ });
+          return;
         }
-      };
 
-      const handleCheckAuth = () => {
-        window.open("https://" + domain + "/scf/v1/current_user", "_blank");
-      };
+        setAuthStatus("loading");
+        fetch("https://" + domain + "/scf/v1/current_user", { credentials: "include" })
+          .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status + "")))
+          .then(data => { setAuthUser(data); setAuthStatus("authenticated"); })
+          .catch(err => { setAuthError(err.message); setAuthStatus("error"); });
+      }, [domain]);
 
       const cfg = ENV_CONFIG[domain];
       const org = portalConfig?.organization;
@@ -394,8 +401,16 @@
                 <Section title="Organization">
                   <InfoRow label="Name" value={org?.name} />
                   <InfoRow label="ID" value={org?.id} mono />
-                  <InfoRow label="use_ai" value={org?.use_ai != null ? String(org.use_ai) : undefined} />
-                  <InfoRow label="Guest submissions" value={portalConfig.allow_guest_submissions != null ? String(portalConfig.allow_guest_submissions) : undefined} />
+                  {org?.id && (
+                    <a
+                      href={"https://" + domain + "/admin/organizations/" + org.id + "/edit"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.debugOrgLink}
+                    >
+                      Open in Admin ↗
+                    </a>
+                  )}
                 </Section>
 
                 <Section title="Feature Flags">
@@ -426,30 +441,27 @@
             )}
 
             <Section title="Auth / User">
-              <button onClick={handleCheckAuth} style={styles.debugAuthBtn} className="wc-btn">
-                Check Auth ↗
-              </button>
-              <p style={{ margin: "8px 0 4px", fontSize: "0.7rem", opacity: 0.5 }}>
-                Open the link above, then paste the JSON response below:
-              </p>
-              <textarea
-                value={userJson}
-                onChange={handlePasteUser}
-                placeholder='Paste /scf/v1/current_user JSON here…'
-                style={styles.debugTextarea}
-                spellCheck={false}
-              />
-              {userParseError && (
-                <div style={{ ...styles.debugErrorMsg, marginTop: "4px" }}>{userParseError}</div>
+              {authStatus === "loading" && (
+                <div style={{ padding: "8px 0", opacity: 0.5, fontSize: "0.8rem" }}>Checking auth…</div>
               )}
-              {parsedUser && (
-                <div style={{ marginTop: "8px" }}>
-                  <InfoRow label="Login" value={parsedUser.login} />
-                  <InfoRow label="Name" value={parsedUser.name} />
-                  <InfoRow label="Email" value={parsedUser.email} />
-                  <InfoRow label="Role" value={parsedUser.role} />
-                  <InfoRow label="ID" value={parsedUser.id} mono />
-                  <InfoRow label="Org ID" value={parsedUser.organization_id} mono />
+              {authStatus === "no_cookie" && (
+                <div style={styles.debugAuthMsg}>
+                  Cannot read session cookie from <strong>{domain}</strong> (cross-domain restriction).
+                  Log in to the portal directly, then refresh.
+                </div>
+              )}
+              {authStatus === "error" && (
+                <div style={{ ...styles.debugErrorMsg, margin: 0 }}>Auth check failed: {authError}</div>
+              )}
+              {authStatus === "authenticated" && authUser && (
+                <div>
+                  <div style={styles.debugAuthSuccess}>Authenticated</div>
+                  <InfoRow label="Login" value={authUser.login} />
+                  <InfoRow label="Name" value={authUser.name} />
+                  <InfoRow label="Email" value={authUser.email} />
+                  <InfoRow label="Role" value={authUser.role} />
+                  <InfoRow label="ID" value={authUser.id} mono />
+                  <InfoRow label="Org ID" value={authUser.organization_id} mono />
                 </div>
               )}
             </Section>
@@ -1057,31 +1069,38 @@
         borderBottom: "1px solid rgba(251,191,36,0.05)",
         wordBreak: "break-all",
       },
-      debugAuthBtn: {
-        padding: "8px 16px",
+      debugOrgLink: {
+        display: "block",
+        marginTop: "8px",
+        padding: "6px 12px",
         fontSize: "0.75rem",
         fontWeight: 700,
-        background: "linear-gradient(180deg, hsl(200 40% 22%) 0%, hsl(200 30% 16%) 100%)",
-        color: "#93c5fd",
-        border: "1px solid rgba(147,197,253,0.4)",
-        borderRadius: "2px",
-        cursor: "pointer",
         fontFamily: '"Cinzel", serif',
-        transition: "filter 0.15s, transform 0.15s",
-        width: "100%",
-      },
-      debugTextarea: {
-        width: "100%",
-        minHeight: "80px",
-        padding: "8px",
-        fontSize: "0.7rem",
-        fontFamily: "'Courier New', monospace",
-        background: "hsl(35 8% 8%)",
-        color: "#fef3c7",
-        border: "1px solid rgba(251,191,36,0.2)",
+        color: "#fbbf24",
+        textAlign: "center",
+        textDecoration: "none",
+        background: "linear-gradient(180deg, hsl(35 40% 22%) 0%, hsl(35 30% 16%) 100%)",
+        border: "1px solid rgba(251,191,36,0.4)",
         borderRadius: "2px",
-        resize: "vertical",
-        outline: "none",
+        transition: "filter 0.15s",
+      },
+      debugAuthMsg: {
+        padding: "8px 12px",
+        fontSize: "0.75rem",
+        color: "#fef3c7",
+        opacity: 0.6,
+        lineHeight: 1.5,
+      },
+      debugAuthSuccess: {
+        padding: "6px 12px",
+        marginBottom: "8px",
+        fontSize: "0.75rem",
+        fontWeight: 700,
+        color: "#4ade80",
+        background: "rgba(34,197,94,0.15)",
+        border: "1px solid rgba(34,197,94,0.4)",
+        borderRadius: "4px",
+        textAlign: "center",
       },
       debugErrorMsg: {
         padding: "8px 16px",

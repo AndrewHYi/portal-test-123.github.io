@@ -172,7 +172,7 @@
     }
 
     // ── EnvBanner component ──
-    function EnvBanner({ domain }) {
+    function EnvBanner({ domain, onReset }) {
       const cfg = ENV_CONFIG[domain];
       return (
         <div style={{
@@ -180,6 +180,11 @@
           backgroundColor: cfg.bannerColor,
           color: "#fff",
         }}>
+          {onReset && (
+            <button onClick={onReset} style={styles.bannerResetButton} title="Back to config">
+              ← Reset
+            </button>
+          )}
           <span style={styles.envBannerText}>
             ⚠️&nbsp; {cfg.label} EMBED SCRIPT TEST &nbsp;⚠️&nbsp;&nbsp;|&nbsp;&nbsp;{domain}
           </span>
@@ -294,12 +299,7 @@
           {loading && !error && <LoadingOverlay domain={domain} />}
           {error && <ErrorBanner message={error} onReset={handleReset} />}
           <div ref={containerRef} style={styles.embedContainer} />
-          <EnvBanner domain={domain} />
-          {!error && (
-            <button onClick={handleReset} style={styles.backButton} title="Back to config">
-              ← Reset
-            </button>
-          )}
+          <EnvBanner domain={domain} onReset={!error ? handleReset : undefined} />
         </div>
       );
     }
@@ -459,6 +459,23 @@
         padding: "14px 24px",
         textAlign: "center",
         boxShadow: "0 -4px 20px rgba(0,0,0,0.3)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      },
+      bannerResetButton: {
+        position: "absolute",
+        left: "16px",
+        top: "50%",
+        transform: "translateY(-50%)",
+        padding: "6px 16px",
+        fontSize: "0.85rem",
+        fontWeight: 700,
+        background: "rgba(255,255,255,0.9)",
+        color: "#333",
+        border: "none",
+        borderRadius: "6px",
+        cursor: "pointer",
       },
       envBannerText: {
         fontSize: "1.3rem",
@@ -466,21 +483,7 @@
         letterSpacing: "1px",
         textTransform: "uppercase",
       },
-      backButton: {
-        position: "fixed",
-        top: "12px",
-        left: "12px",
-        zIndex: 10001,
-        padding: "8px 16px",
-        fontSize: "0.85rem",
-        fontWeight: 600,
-        background: "rgba(255,255,255,0.9)",
-        color: "#333",
-        border: "1px solid #ccc",
-        borderRadius: "6px",
-        cursor: "pointer",
-        backdropFilter: "blur(4px)",
-      },
+
       loadingOverlay: {
         position: "fixed",
         top: 0,

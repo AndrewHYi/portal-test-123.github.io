@@ -57,6 +57,23 @@
     const DOMAINS = Object.keys(ENV_CONFIG);
     const DEFAULT_DOMAIN = "test.seeclickfix.com";
 
+    // ── URL hash helpers ──
+    function writeHash(domain, token) {
+      window.location.hash = "domain=" + encodeURIComponent(domain) + "&token=" + encodeURIComponent(token);
+    }
+    function readHash() {
+      const h = window.location.hash.slice(1);
+      if (!h) return null;
+      const params = new URLSearchParams(h);
+      const domain = params.get("domain");
+      const token = params.get("token");
+      if (domain && token && ENV_CONFIG[domain]) return { domain, token };
+      return null;
+    }
+    function clearHash() {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+
     // ── Cleanup helpers ──
     function cleanupEmbed() {
       // Remove any injected embed / marker scripts
@@ -250,12 +267,15 @@
 
     // ── App component ──
     function App() {
-      const [view, setView] = useState("config");
-      const [activeDomain, setActiveDomain] = useState(null);
-      const [activeToken, setActiveToken] = useState(null);
+      // Check URL hash on mount for persisted state
+      const initial = readHash();
+      const [view, setView] = useState(initial ? "embed" : "config");
+      const [activeDomain, setActiveDomain] = useState(initial ? initial.domain : null);
+      const [activeToken, setActiveToken] = useState(initial ? initial.token : null);
 
       const handleLoad = (domain, token) => {
         cleanupEmbed();
+        writeHash(domain, token);
         setActiveDomain(domain);
         setActiveToken(token);
         setView("embed");
@@ -263,6 +283,7 @@
 
       const handleReset = () => {
         cleanupEmbed();
+        clearHash();
         setView("config");
         setActiveDomain(null);
         setActiveToken(null);

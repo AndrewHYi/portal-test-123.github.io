@@ -172,8 +172,12 @@
     }
 
     // ── EnvBanner component ──
-    function EnvBanner({ domain, onReset }) {
+    function EnvBanner({ domain, token, onReset }) {
       const cfg = ENV_CONFIG[domain];
+      const handlePopout = () => {
+        const url = window.location.origin + window.location.pathname + "#domain=" + encodeURIComponent(domain) + "&token=" + encodeURIComponent(token);
+        window.open(url, "_blank");
+      };
       return (
         <div style={{
           ...styles.envBanner,
@@ -188,6 +192,9 @@
           <span style={styles.envBannerText}>
             ⚠️&nbsp; {cfg.label} EMBED SCRIPT TEST &nbsp;⚠️&nbsp;&nbsp;|&nbsp;&nbsp;{domain}
           </span>
+          <button onClick={handlePopout} style={styles.bannerPopoutButton} title="Open in new tab">
+            ↗ Popout
+          </button>
         </div>
       );
     }
@@ -352,7 +359,7 @@
           {loading && !error && <LoadingOverlay domain={domain} />}
           {error && <ErrorBanner message={error} onReset={handleReset} />}
           <div ref={containerRef} style={styles.embedContainer} />
-          <EnvBanner domain={domain} onReset={!error ? handleReset : undefined} />
+          <EnvBanner domain={domain} token={token} onReset={!error ? handleReset : undefined} />
         </div>
       );
     }
@@ -519,6 +526,20 @@
       bannerResetButton: {
         position: "absolute",
         left: "16px",
+        top: "50%",
+        transform: "translateY(-50%)",
+        padding: "6px 16px",
+        fontSize: "0.85rem",
+        fontWeight: 700,
+        background: "rgba(255,255,255,0.9)",
+        color: "#333",
+        border: "none",
+        borderRadius: "6px",
+        cursor: "pointer",
+      },
+      bannerPopoutButton: {
+        position: "absolute",
+        right: "16px",
         top: "50%",
         transform: "translateY(-50%)",
         padding: "6px 16px",

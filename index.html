@@ -14,7 +14,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- Babel Standalone for in-browser JSX -->
-  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -89,7 +89,7 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" data-type="module">
+  <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef, useCallback } = React;
 
     // ── Environment configs ──
@@ -97,7 +97,7 @@
       "test.seeclickfix.com": {
         label: "TEST",
         embedUrl: "https://s3.amazonaws.com/cdn.seeclickfix.com/web_portal_test/embed.js",
-        defaultToken: "CqTuizuRg28XaNXqMZszFRsp",
+        defaultToken: "",
         bannerColor: "#8b4513",
         bannerBg: "#3d1c00",
       },
@@ -118,7 +118,7 @@
     };
 
     const DOMAINS = Object.keys(ENV_CONFIG);
-    const DEFAULT_DOMAIN = "test.seeclickfix.com";
+    const DEFAULT_DOMAIN = "int.seeclickfix.com";
 
     // ── URL hash helpers ──
     function writeHash(domain, token) {
